@@ -378,3 +378,48 @@ class TestCaseImageMetadata:
         )
         meta_r = client.get(f"/api/v1/cases/{case_id}/image/metadata", headers=researcher_headers)
         assert meta_r.status_code == 200
+def test_patient_and_case_creation_audit(client, account, db):
+    from sqlalchemy import select
+    from app.models import AuditEvent
+
+    user, headers = account("Clinician")
+
+    patient_response = client.post(
+        "/api/v1/patients",
+        headers=headers,
+        json={
+            "patient_code": f"PT-{_uid()}",
+            "display_name": "Audit Test Patient",
+        },
+    )
+    assert patient_response.status_code == 201
+    patient_id = patient_response.json()["id"]
+
+    case_response = client.post(
+        "/api/v1/cases",
+        headers=headers,
+        json={
+            "patient_id": patient_id,
+            "case_code": f"CASE-{_uid()}",
+            "study_type": "Audit Test",
+        },
+    )
+    assert case_response.status_code == 201
+    case_id = case_response.json()["id"]
+
+    events = db.scalars(
+        select(AuditEvent).where(
+            AuditEvent.action.in_(["patient.created", "case.created"])
+        )
+    ).all()
+
+    patient_event = next(e for e in events if e.action == "patient.created")
+    case_event = next(e for e in events if e.action == "case.created")
+
+    assert patient_event.actor_id == user.id
+    assert patient_event.resource_id == patient_id
+    assert patient_event.created_at is not None
+
+    assert case_event.actor_id == user.id
+    assert case_event.resource_id == case_id
+    assert case_event.created_at is not None

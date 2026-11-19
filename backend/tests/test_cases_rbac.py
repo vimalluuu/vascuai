@@ -131,3 +131,30 @@ def test_path_escape_and_preprocessing_errors(client, account, db, tmp_path):
     assert client.get(f"/api/v1/cases/{case['id']}/image/metadata", headers=headers).status_code == 400
     for array in [np.array([], dtype=np.uint8), np.array([float("nan")]), np.array([2.0]), np.array([1], dtype=np.int32)]:
         with pytest.raises(ImagePreprocessingError): normalize_image(array)
+def test_admin_audit_records_actor_and_timestamp(client, account, db):
+    from datetime import datetime
+    from sqlalchemy import select
+    from app.models import AuditEvent
+
+    admin, headers = account("Admin")
+
+    response = client.get("/api/v1/admin/audit", headers=headers)
+
+    assert response.status_code == 200
+
+    event = db.scalars(
+        select(AuditEvent).where(AuditEvent.action == "admin.audit_read")
+    ).one()
+
+    assert event.actor_id == admin.id
+    assert event.action == "admin.audit_read"
+    assert isinstance(event.created_at, datetime)
+
+    returned_event = next(
+        item for item in response.json()
+        if item["id"] == event.id
+    )
+
+    assert returned_event["actor_id"] == admin.id
+    assert returned_event["action"] == "admin.audit_read"
+    assert returned_event["created_at"] is not None
